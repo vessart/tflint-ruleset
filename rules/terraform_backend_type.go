@@ -39,7 +39,6 @@ func (r *TerraformBackendTypeRule) Link() string {
 
 // Check checks whether ...
 func (r *TerraformBackendTypeRule) Check(runner tflint.Runner) error {
-	// This rule is an example to get attributes of blocks other than resources.
 	content, err := runner.GetModuleContent(&hclext.BodySchema{
 		Blocks: []hclext.BlockSchema{
 			{
@@ -49,6 +48,13 @@ func (r *TerraformBackendTypeRule) Check(runner tflint.Runner) error {
 						{
 							Type:       "backend",
 							LabelNames: []string{"type"},
+							Body: &hclext.BodySchema{
+								Attributes: []hclext.AttributeSchema{
+									{Name: "address"},
+									{Name: "lock_method"},
+									{Name: "unlock_method"},
+								},
+							},
 						},
 					},
 				},
@@ -61,13 +67,55 @@ func (r *TerraformBackendTypeRule) Check(runner tflint.Runner) error {
 
 	for _, terraform := range content.Blocks {
 		for _, backend := range terraform.Body.Blocks {
-			err := runner.EmitIssue(
-				r,
-				fmt.Sprintf("backend type is %s", backend.Labels[0]),
-				backend.DefRange,
-			)
-			if err != nil {
-				return err
+			backendType := backend.Labels[0]
+			if backendType != "http" {
+				return runner.EmitIssue(
+					r,
+					fmt.Sprintf("backend type must be 'http', but found '%s'", backendType),
+					backend.DefRange,
+				)
+			}
+
+			var lockMethod, unlockMethod string
+
+			// Check lock_method
+			lockMethodAttr := backend.Body.Attributes["lock_method"]
+			if lockMethodAttr == nil {
+				return runner.EmitIssue(
+					r,
+					`"lock_method" attribute is required`,
+					backend.DefRange,
+				)
+			}
+			if diag := runner.EvaluateExpr(lockMethodAttr.Expr, &lockMethod, nil); diag != nil {
+				return diag
+			}
+			if lockMethod != "POST" {
+				return runner.EmitIssue(
+					r,
+					`"lock_method" must be "POST"`,
+					lockMethodAttr.Range,
+				)
+			}
+
+			// Check unlock_method
+			unlockMethodAttr := backend.Body.Attributes["unlock_method"]
+			if unlockMethodAttr == nil {
+				return runner.EmitIssue(
+					r,
+					`"unlock_method" attribute is required`,
+					backend.DefRange,
+				)
+			}
+			if diag := runner.EvaluateExpr(unlockMethodAttr.Expr, &unlockMethod, nil); diag != nil {
+				return diag
+			}
+			if unlockMethod != "DELETE" {
+				return runner.EmitIssue(
+					r,
+					`"unlock_method" must be "DELETE"`,
+					unlockMethodAttr.Range,
+				)
 			}
 		}
 	}
